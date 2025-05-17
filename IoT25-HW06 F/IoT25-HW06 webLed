@@ -1,0 +1,224 @@
+#include <WiFi.h>
+#include <BluetoothSerial.h>
+
+const int led26 = 26;
+const int led27 = 27;
+String led26State = "off";
+String led27State = "off";
+
+const char* ssid = "KT_GiGA_39F1";
+const char* password = "hca5zk8615";
+WiFiServer server(80);
+String wifiIP = "";
+
+
+BluetoothSerial SerialBT;
+String deviceName = "CHAE_HEEJAE_BT";
+String serialInput = "";
+String btInput = "";
+
+
+bool verifyWiFiNetwork(const char* target_ssid);
+bool connectWiFi(const char* ssid, const char* password);
+void handleWebClient();
+void processSerialInput();
+void processBluetoothInput();
+void handleCommand(String cmd);
+
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(led26, OUTPUT);
+  pinMode(led27, OUTPUT);
+  digitalWrite(led26, LOW);
+  digitalWrite(led27, LOW);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  if (verifyWiFiNetwork(ssid) && connectWiFi(ssid, password)) {
+    server.begin();
+    wifiIP = WiFi.localIP().toString();
+    Serial.println("Web server started | IP: " + wifiIP);
+  }
+
+
+  SerialBT.begin(deviceName);
+  Serial.println("Bluetooth device started: " + deviceName);
+}
+
+
+void loop() {
+  handleWebClient();   
+  processSerialInput();  
+  processBluetoothInput();
+  delay(10);
+}
+
+
+
+bool verifyWiFiNetwork(const char* target_ssid) {
+  Serial.println("Scanning for WiFi networks...");
+  int n = WiFi.scanNetworks();
+  bool found = false;
+  if (n == 0) {
+    Serial.println("No WiFi networks found.");
+  } else {
+    Serial.printf("%d networks found:\n", n);
+    for (int i = 0; i < n; ++i) {
+      Serial.printf("%2d: %s (Signal strength: %d dBm)\n", i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+      if (WiFi.SSID(i) == target_ssid) found = true;
+      delay(10);
+      }
+    }
+    if (found) {
+      Serial.printf("'%s' network is available.\n", target_ssid);
+    } else {
+      Serial.printf("'%s' network not found.\n", target_ssid);
+    }
+  return found;
+}
+
+
+bool connectWiFi(const char* ssid, const char* password) {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.printf("Attempting to connect to '%s'...\n", ssid);
+  unsigned long startAttemptTime = millis();
+  const unsigned long wifiTimeout = 20000; 
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < wifiTimeout) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println();
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("WiFi connected successfully!");
+      return true;
+    } else {
+      Serial.println("WiFi connection failed!");
+      return false;
+  }
+}
+
+void handleWebClient() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client = server.available();
+    if (client) {
+      Serial.println("New Client.");
+      String currentLine = "";
+      String header = "";
+      unsigned long timeout = millis();
+
+      while (client.connected() && millis() - timeout < 2000) {
+        if (client.available()) {
+          char c = client.read();
+          header += c;
+
+          if (c == '\n') {
+            if (currentLine.length() == 0) {
+
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-type:text/html");
+              client.println("Connection: close");
+              client.println();
+
+              client.println("<!DOCTYPE html><html>");
+              client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+              client.println("<style>.button {padding: 20px 40px; font-size: 24px;}</style>");
+              client.println("</head><body>");
+              client.println("<h1>ESP32 LED Control</h1>");
+              client.println("<p>GPIO 26 State: " + led26State + "</p>");
+              client.println(led26State == "off" ?
+                "<p><a href=\"/26/on\"><button class=\"button\">ON</button></a></p>" :
+                "<p><a href=\"/26/off\"><button class=\"button\">OFF</button></a></p>");
+              client.println("<p>GPIO 27 State: " + led27State + "</p>");
+              client.println(led27State == "off" ?
+                "<p><a href=\"/27/on\"><button class=\"button\">ON</button></a></p>" :
+                "<p><a href=\"/27/off\"><button class=\"button\">OFF</button></a></p>");
+              client.println("<hr>");
+              client.println("<p>IP Address: " + wifiIP + "</p>");
+              client.println("</body></html>");
+              break;
+            } else {
+              currentLine = "";
+            }
+          } else if (c != '\r') {
+            currentLine += c;
+          }
+
+          if (header.indexOf("GET /26/on") >= 0) {
+            digitalWrite(led26, HIGH);
+            led26State = "on";
+          } else if (header.indexOf("GET /26/off") >= 0) {
+            digitalWrite(led26, LOW);
+            led26State = "off";
+          } else if (header.indexOf("GET /27/on") >= 0) {
+            digitalWrite(led27, HIGH);
+            led27State = "on";
+          } else if (header.indexOf("GET /27/off") >= 0) {
+            digitalWrite(led27, LOW);
+            led27State = "off";
+            }
+            }
+           }
+        client.stop();
+        Serial.println("Client disconnected.");
+      }
+      }
+  }
+
+
+void processSerialInput() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') {
+      handleCommand(serialInput);
+      serialInput = "";
+    } else {
+      serialInput += c;
+        }
+    }
+  }
+
+  void processBluetoothInput() {
+      while (SerialBT.available()) {
+      char c = SerialBT.read();
+      if (c == '\n') {
+        handleCommand(btInput);
+        btInput = "";
+      } else {
+        btInput += c;
+        }
+       }
+    }
+
+
+void handleCommand(String cmd) {
+  cmd.trim();
+  if (cmd == "webinfo") {
+    String response = "[Web Server Info]\nIP: " + wifiIP;
+    Serial.println(response);
+    SerialBT.println(response);
+    }
+    else if (cmd.startsWith("led")) {
+      int pin = cmd.substring(3, 5).toInt();
+      String state = cmd.substring(6);
+
+    if ((pin == 26 || pin == 27) && (state == "on" || state == "off")) {
+      digitalWrite(pin, state == "on" ? HIGH : LOW);
+      if (pin == 26) led26State = state;
+      else led27State = state;
+
+      String result = "LED " + String(pin) + " " + state;
+      Serial.println(result);
+      SerialBT.println(result);
+    }
+    }
+  else if (cmd != "") {
+    String echo = "Received command: " + cmd;
+    Serial.println(echo);
+    SerialBT.println(echo);
+  }
+}
