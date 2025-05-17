@@ -1,0 +1,209 @@
+#include "BLEDevice.h"
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_GFX.h>
+
+
+#define temperatureCelsius
+
+#define bleServerName "ESP32_DHT"
+
+static BLEUUID bmeServiceUUID("91bad492-b950-4226-aa2b-4ede9fa42f59");
+
+
+#ifdef temperatureCelsius
+  
+  static BLEUUID temperatureCharacteristicUUID("cba1d466-344c-4be3-ab3f-189f80dd7518");
+#else
+  
+  static BLEUUID temperatureCharacteristicUUID("f78ebbff-c8b7-4107-93de-889a6a06d408");
+#endif
+
+
+static BLEUUID humidityCharacteristicUUID("ca73b3ba-39f6-4ab3-91ae-186dc9577d99");
+
+
+static boolean doConnect = false;
+static boolean connected = false;
+
+
+static BLEAddress *pServerAddress;
+ 
+
+static BLERemoteCharacteristic* temperatureCharacteristic;
+static BLERemoteCharacteristic* humidityCharacteristic;
+
+
+const uint8_t notificationOn[] = {0x1, 0x0};
+const uint8_t notificationOff[] = {0x0, 0x0};
+
+#define SCREEN_WIDTH 128 
+#define SCREEN_HEIGHT 64 
+
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+
+char* temperatureChar;
+char* humidityChar;
+
+
+boolean newTemperature = false;
+boolean newHumidity = false;
+
+
+bool connectToServer(BLEAddress pAddress) {
+   BLEClient* pClient = BLEDevice::createClient();
+ 
+
+  pClient->connect(pAddress);
+  Serial.println(" - Connected to server");
+ 
+
+  BLERemoteService* pRemoteService = pClient->getService(bmeServiceUUID);
+  if (pRemoteService == nullptr) {
+    Serial.print("Failed to find our service UUID: ");
+    Serial.println(bmeServiceUUID.toString().c_str());
+    return (false);
+  }
+ 
+
+  temperatureCharacteristic = pRemoteService->getCharacteristic(temperatureCharacteristicUUID);
+  humidityCharacteristic = pRemoteService->getCharacteristic(humidityCharacteristicUUID);
+
+  if (temperatureCharacteristic == nullptr || humidityCharacteristic == nullptr) {
+    Serial.print("Failed to find our characteristic UUID");
+    return false;
+  }
+  Serial.println(" - Found our characteristics");
+ 
+  
+  temperatureCharacteristic->registerForNotify(temperatureNotifyCallback);
+  humidityCharacteristic->registerForNotify(humidityNotifyCallback);
+  return true;
+}
+
+
+class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    if (advertisedDevice.getName() == bleServerName) { 
+      advertisedDevice.getScan()->stop(); 
+      pServerAddress = new BLEAddress(advertisedDevice.getAddress()); 
+      doConnect = true; 
+      Serial.println("Device found. Connecting!");
+    }
+  }
+};
+ 
+
+static char temperatureBuffer[16];
+static void temperatureNotifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, 
+                                      uint8_t* pData, size_t length, bool isNotify) {
+  if (length < sizeof(temperatureBuffer)) {
+    memcpy(temperatureBuffer, pData, length);
+    temperatureBuffer[length] = '\0'; 
+    temperatureChar = temperatureBuffer;
+    newTemperature = true;
+  }
+}
+
+
+static void humidityNotifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, 
+                                    uint8_t* pData, size_t length, bool isNotify) {
+ 
+  humidityChar = (char*)pData;
+  newHumidity = true;
+  Serial.print(newHumidity);
+}
+
+
+void printReadings(){
+  
+  display.clearDisplay();  
+
+  display.setTextSize(1);
+  display.setCursor(0,0);
+  display.print("Temperature: ");
+  display.setTextSize(2);
+  display.setCursor(0,10);
+  display.print(temperatureChar);
+  display.setTextSize(1);
+  display.cp437(true);
+  display.write(167);
+  display.setTextSize(2);
+  Serial.print("Temperature:");
+  Serial.print(temperatureChar);
+  #ifdef temperatureCelsius
+ 
+    display.print("C");
+    Serial.print("C");
+  #else
+  
+    display.print("F");
+    Serial.print("F");
+  #endif
+
+  
+  display.setTextSize(1);
+  display.setCursor(0, 35);
+  display.print("Humidity: ");
+  display.setTextSize(2);
+  display.setCursor(0, 45);
+  display.print(humidityChar);
+  display.print("%");
+  display.display();
+  Serial.print(" Humidity:");
+  Serial.print(humidityChar); 
+  Serial.println("%");
+}
+
+void setup() {
+
+
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); 
+  }
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(WHITE,0);
+  display.setCursor(0,25);
+  display.print("BLE Client");
+  display.display();
+  
+
+  Serial.begin(115200);
+  Serial.println("Starting Arduino BLE Client application...");
+
+
+  BLEDevice::init("");
+ 
+
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setActiveScan(true);
+  pBLEScan->start(30);
+}
+
+void loop() {
+ 
+  if (doConnect == true) {
+    if (connectToServer(*pServerAddress)) {
+      Serial.println("We are now connected to the BLE Server.");
+   
+      temperatureCharacteristic->getDescriptor(BLEUUID((uint16_t)0x2902))->writeValue((uint8_t*)notificationOn, 2, true);
+      humidityCharacteristic->getDescriptor(BLEUUID((uint16_t)0x2902))->writeValue((uint8_t*)notificationOn, 2, true);
+      connected = true;
+    } else {
+      Serial.println("We have failed to connect to the server; Restart your device to scan for nearby BLE server again.");
+    }
+    doConnect = false;
+  }
+
+  if (newTemperature && newHumidity){
+    newTemperature = false;
+    newHumidity = false;
+    printReadings();
+  }
+  delay(1000); 
+}
