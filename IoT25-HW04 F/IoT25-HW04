@@ -1,0 +1,44 @@
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT;
+String serialInput = "";
+String btInput = "";
+String deviceName = "CHAE_HEEJAE"; 
+
+void setup() {
+Serial.begin(115200);
+SerialBT.begin(deviceName);
+Serial.println("Bluetooth Ready");
+}
+
+void processSerialInput() {
+while (Serial.available()) {
+char c = Serial.read();
+if (c == '\n') {
+Serial.print("Inputed msg: ");
+Serial.println(serialInput);
+serialInput = "";
+} else {
+serialInput += c;
+}
+}
+}
+
+void processBluetoothInput() {
+while (SerialBT.available()) {
+char c = SerialBT.read();
+if (c == '\n') {
+Serial.print("Received msg: ");
+Serial.println(btInput);
+btInput = "";
+} else {
+btInput += c;
+}
+}
+}
+
+void loop() {
+processSerialInput();
+processBluetoothInput();
+delay(10);
+}
